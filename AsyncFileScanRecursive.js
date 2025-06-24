@@ -22,62 +22,55 @@ V2.4 2021-01-10: The output of this function should really be an array of file a
 	-- Now excludes the original source folder because thats uneeded
 	-- Only files include sizes and modified values
 
+V3.0 2025-06-24: Massively simplfied the entire process by using the new node:fs promises libarary 
+	- Also changed the module type from the old 'require' system to the new 'import' system
+*/
+'use strict'
+import fs from 'node:fs/promises'	// the promises library massively simplifies async
+import path from 'path'
+
+/**
+* @params FOLDER = the directory path that you want to start searching through
+*	IMPORTANT: This is for internal use. Sanitize the output before passing it along to the end user
 */
 
-const fs = require('fs')
-const path = require('path')
 
-let AsyncFileScanRecursive = async( target = __dirname, trunc = /^\//  ) =>{
+const AsyncTree = async( DIRECTORY = null, accumulatedItems = [] ) =>{
+	if ( !DIRECTORY ){
+		throw new Error('AsyncTree() was called without a directory path')
+	}
 
-	let checkItem = ( truePath ) => {
-		const isTrunc = truePath === trunc
-		const relativePath = isTrunc? '/' : truePath.replace(trunc, '')
+	const items = await fs.readdir(DIRECTORY)
+
+	for ( const item of items ){
+		const fullPath = path.join( DIRECTORY, item )
+		const stat = await fs.stat(fullPath)
+		const isFile = stat.isFile()
 		
-		return new Promise( (resolve) => {
+		if( isFile ){
+			const { size, mtime } = stat
+
+			accumulatedItems.push({
+				file: item,
+				size, 
+				mtime,
+				parentFolder: DIRECTORY,
+				filePath: fullPath
+			})
+		} else {
 			
-			fs.stat( truePath, (err,stat)=>{
-				if(err ){ 
-					resolve([{err: err.code,attempted:relativePath}])
-						// Put in array incase error thrown by a folder
-				} else { 
-					const { size, mtime }  = stat
-					const isFile = stat.isFile()
-					const modified = new Date(mtime)
-					const ext = isFile? path.extname(relativePath): null
-					const folderItem = ( isTrunc || isFile )? 
-						null: { folder: relativePath }
-					
-					resolve( 
-						stat.isFile()? 
-							{ file: relativePath, modified, size, ext }
-							: scanFolder(truePath, folderItem ) 
-					)
-				}
+			accumulatedItems.push({
+				folder: item,
+				folderPath: fullPath
 			})
-		})
-	}
+
+			const subFiles = await AsyncTree(fullPath, accumulatedItems)
 	
-	let scanFolder = async( folderPath, subFolderObj )=> {
-		return new Promise( (resolve,reject) => {
-			fs.readdir( folderPath, {withFileTypes:false}, (err,list) =>{
-				if(err){
-					return(err)
-				}else {				
-					let scan = list
-						.map( item => checkItem( `${folderPath}/${item}` ) )
-										
-					resolve( Promise.all( 
-						subFolderObj? [subFolderObj].concat(scan) : scan )	
-					) 
-					// Add subFolderObj or it won't be included in results
-				}
-			})
-		})
+		}
+		
 	}
 
-	let output = await checkItem(target, trunc )
-	return output? output.flat(Infinity) : null // send null if folder doesnt exist
+	return accumulatedItems
 }
 
-
-module.exports = { AsyncFileScanRecursive }
+export default AsyncTree
